@@ -152,7 +152,7 @@ def mono_basex(p, x):
     return bas
 from scipy.interpolate import fitpack as spl
 @jit
-def spli_basex(p, x ,knots=None , deg = 3 , order = 0 ):
+def spli_basex(p, x ,knots=None , deg = 2 , order = 0 ):
     """Vandermonde type matrix for splines.
 
     Returns a matrix whose columns are the values of the b-splines of deg
