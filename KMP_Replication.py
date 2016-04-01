@@ -9,11 +9,12 @@ from poly_base import interpolate as ip #Imported from Laszlo's github directory
 from Rowenhurst import Rowenhurst
 import numpy as np
 import matplotlib.pyplot as plt
+
 from scipy.misc import derivative as deriv
 import scipy.linalg as slin
 from numba import jit
 from scipy.optimize import root
-
+from scipy.optimize import minimize
 'Parameters'
 rho_z = 0.79
 sigma_z = 0.34
@@ -62,12 +63,7 @@ c_guess = 1.0 * np.ones((n_s,1))
 c_guess1 = 1.0 * np.ones((n_ds,1)) # for the distribution
 coeff_guess = slin.solve(Phi_s,V)
 coeff_e_guess = slin.solve(Phi_s , np.kron(T , np.eye(n_a)) @ Phi_s @ coeff_guess)
-'Initial guess for price'
-q_t = 1.1
-q_t1 = 1.1
-w = 1.0
-r = 0.03
-u = (1. + r) * q_t1 / q_t - 1. 
+
 'GHH preferences (Penalizing values for which g > disutility from working)'
 @jit
 def GHH(g,n):  
@@ -80,13 +76,13 @@ def GHH(g,n):
     return Res
 
 'Vectorized Newton-Raphson method for maximization'
-def newton_method(oldguess,first_deriv,second_deriv,dampen_newton):
+def newton_method(oldguess,first_deriv,second_deriv,dampen_newton,q_t,q_t1,r,w,u):
     return oldguess - dampen_newton * np.multiply((1./second_deriv), first_deriv)
 
 'Bellman iteration'
-def bellman(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F):  
+def bellman(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F,q_t,q_t1,r,w,u):  
     Phi_xps = ip.funbas(P,sprime,(0,0),Polyname)
-    coeff_next = slin.solve(Phi_s,( F(s, c_vec) + beta * Phi_xps @ coeff_e))
+    coeff_next = slin.solve(Phi_s,( F(s, c_vec,q_t,q_t1,r,w,u) + beta * Phi_xps @ coeff_e))
     coeff_e_next = slin.solve(Phi_s , np.kron(T , np.eye(n_a)) @ Phi_s @ coeff)
     coeff1 = (1.-dampen_coeff) * coeff+ dampen_coeff * coeff_next
     coeff_e1 = (1. -dampen_coeff) * coeff_e+ dampen_coeff *  coeff_e_next
@@ -94,9 +90,9 @@ def bellman(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F):
     return conv, coeff1 , coeff_e1   
     
 'Newton Iteration of the value function'
-def newton_iter(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F):
+def newton_iter(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F,q_t,q_t1,r,w,u):
     Phi_xps = ip.funbas(P,sprime,(0,0),Polyname)    
-    g1 = Phi_s @ coeff - F(s, c_vec) -  beta * Phi_xps @ coeff_e 
+    g1 = Phi_s @ coeff - F(s, c_vec,q_t,q_t1,r,w,u) -  beta * Phi_xps @ coeff_e 
     g2 = Phi_s @ coeff_e - np.kron(T,np.eye(n_a)) @ Phi_s @ coeff
     D = np.bmat([[Phi_s, - beta * Phi_xps], [ - np.kron(T,np.eye(n_a)) @ Phi_s, Phi_s]])
     res =np.concatenate((coeff,coeff_e)) - dampen_coeff * slin.inv(D) @ np.concatenate((g1,g2))
@@ -109,7 +105,7 @@ def newton_iter(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F):
 
 'Functions to be used in loop'
 
-def F(s , c):
+def F(s , c,q_t,q_t1,r,w,u):
     n_S = len(s)
     a = np.reshape(s[:,0],(n_S,1))
     z = np.reshape(s[:,1],(n_S,1))
@@ -132,7 +128,7 @@ def F(s , c):
     g = ( c**((epsilon-1.0)/epsilon) + (eta ** (1.0/epsilon)) * h **((epsilon-1.0)/epsilon) ) ** (epsilon/(epsilon-1.0))
     return GHH(g,n)
     
-def aprimefunc(s,c):
+def aprimefunc(s,c,q_t,q_t1,r,w,u):
     n_S = len(s)
     a = np.reshape(s[:,0],(n_S,1))
     z = np.reshape(s[:,1],(n_S,1))
@@ -153,77 +149,77 @@ def aprimefunc(s,c):
     h , mu , p , n = G(c , a , z)
     return  ( w * np.multiply(z , n)  + (1 + r) * a - c - u * q_t * h)
         
-def aprimefunc_scal(a,z,c):
-    s_scal = np.ones((1,2))
-    c_scal = np.ones((1,1))
+def aprimefunc_scal(a,z,c,q_t,q_t1,r,w,u):
+    s_scal = np.empty((1,2))
+    c_scal = np.empty((1,1))
     s_scal[0,0] = a
     s_scal[0,1] = z
     c_scal[0,0] = c
-    return aprimefunc(s_scal[0:1,:],c_scal[0:1,:])
+    return aprimefunc(s_scal[0:1,:],c_scal[0:1,:],q_t,q_t1,r,w,u)
 
-def aprimefunc_x_scal(a,z,c):
+def aprimefunc_x_scal(a,z,c,q_t,q_t1,r,w,u):
     def aprimefunc_a(cpr):
-        return aprimefunc_scal(a,z,cpr)
+        return aprimefunc_scal(a,z,cpr,q_t,q_t1,r,w,u)
     return deriv(aprimefunc_a,c,dx= 1e-6,n=1)   
     
-def aprimefunc_xx_scal(a,z,c):
+def aprimefunc_xx_scal(a,z,c,q_t,q_t1,r,w,u):
     def aprimefunc_a(cpr):
-        return aprimefunc_scal(a,z,cpr)
+        return aprimefunc_scal(a,z,cpr,q_t,q_t1,r,w,u)
     return deriv(aprimefunc_a,c,dx= 1e-6,n=2)      
-def aprimefunc_x(state , c_vec):
+def aprimefunc_x(state , c_vec,q_t,q_t1,r,w,u):
     n_S = len(state)
     Res = np.empty((n_S,1))
     for i in range(n_S):
-        Res[i,0] = aprimefunc_x_scal(state[i,0],state[i,1],c_vec[i,0])
+        Res[i,0] = aprimefunc_x_scal(state[i,0],state[i,1],c_vec[i,0],q_t,q_t1,r,w,u)
     return Res 
-def aprimefunc_xx(state , c_vec):
+def aprimefunc_xx(state , c_vec,q_t,q_t1,r,w,u):
     n_S = len(state)
     Res = np.empty((n_S,1))
     for i in range(n_S):
-        Res[i,0] = aprimefunc_xx_scal(state[i,0],state[i,1],c_vec[i,0])
+        Res[i,0] = aprimefunc_xx_scal(state[i,0],state[i,1],c_vec[i,0],q_t,q_t1,r,w,u)
     return Res       
-def F_scal(a,z,c):
-    s_scal = np.ones((1,2))
-    c_scal = np.ones((1,1))
+def F_scal(a,z,c,q_t,q_t1,r,w,u):
+    s_scal = np.empty((1,2))
+    c_scal = np.empty((1,1))
     s_scal[0,0] = a
     s_scal[0,1] = z
     c_scal[0,0] = c
-    return F(s_scal[0:1,:],c_scal[0:1,:])
+    return F(s_scal[0:1,:],c_scal[0:1,:],q_t,q_t1,r,w,u)
    
-def F_x_scal(a,z,c):
+def F_x_scal(a,z,c,q_t,q_t1,r,w,u):
     def f_a(cpr):
-        return F_scal(a,z,cpr)
+        return F_scal(a,z,cpr,q_t,q_t1,r,w,u)
     return deriv(f_a,c,dx= 1e-6,n=1)
     
-def F_xx_scal(a,z,c):
+def F_xx_scal(a,z,c,q_t,q_t1,r,w,u):
     def f_a(cpr):
-        return F_scal(a,z,cpr)
+        return F_scal(a,z,cpr,q_t,q_t1,r,w,u)
     return deriv(f_a,c,dx= 1e-6,n=2)   
-def F_x(state , c_vec):
+def F_x(state , c_vec,q_t,q_t1,r,w,u):
     n_S = len(state)
     Res = np.empty((n_S,1))
     for i in range(n_S):
-        Res[i,0] = F_x_scal(state[i,0],state[i,1],c_vec[i,0])
+        Res[i,0] = F_x_scal(state[i,0],state[i,1],c_vec[i,0],q_t,q_t1,r,w,u)
     return Res 
-def F_xx(state , c_vec):
+def F_xx(state , c_vec,q_t,q_t1,r,w,u):
     n_S = len(state)
     Res = np.empty((n_S,1))
     for i in range(n_S):
-        Res[i,0] = F_xx_scal(state[i,0],state[i,1],c_vec[i,0])
+        Res[i,0] = F_xx_scal(state[i,0],state[i,1],c_vec[i,0],q_t,q_t1,r,w,u)
     return Res 
 'Inverting aprime_func at a_lower for each state variable'
-def c_bounds(s,c_vec,aprime1 = None):
+def c_bounds(s,c_vec,q_t,q_t1,r,w,u,aprime1 = None):
     n_S = len(s)
     if aprime1 == None:
         aprime1 = a_lower * np.ones((n_S,1))
     elif aprime1 == 'upper' :
         aprime1 = a_upper * np.ones((n_S,1))
     def c_solve(c):
-        return (aprime1 - aprimefunc(s,c))[:,0]
+        return (aprime1 - aprimefunc(s,c,q_t,q_t1,r,w,u))[:,0]
     sol = root(c_solve,c_vec[:,0], method='hybr')   
     return np.reshape(sol.x,(n_S,1))
 'Get housing and the risk free asset from wealth and labor supply'
-def housefunc(s,c):
+def housefunc(s,c,q_t,q_t1,r,w,u):
     n_S = len(s)
     a = np.reshape(s[:,0],(n_S,1))
     z = np.reshape(s[:,1],(n_S,1))
@@ -240,46 +236,49 @@ def housefunc(s,c):
         p = np.reshape(p,(n_S,1))
         n = (w* (z / p)) **nu   
         return  h, mu , p , n
-    
-    h , mu , p , n = G(c , a , z)
+    h , mu , p , n = G(c , a , z) 
     aprime = ( w * np.multiply(z , n)  + (1 + r) * a - c - u * q_t * h)
     bprime = aprime - h
-    return  bprime , h, n
+    return h, n, bprime, aprime
 
-def main_loop(coeff,coeff_e,c_vec = c_guess,outer_loop = None,n_a1 = n_a,dampen_coeff = dampen_coeff_start):
+def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,dampen_coeff = dampen_coeff_start):
+    q_t = prices[1]
+    q_t1 = prices[1]
+    r = prices[0]
+    w = 1.0
+    u = (1. + r) * q_t1 / q_t - 1.     
     'Quantities'
     conv1 = 2.0
     iteration = 0
     agrid = np.linspace(a_lower,a_upper, n_a1)
     agrid = np.reshape(agrid,(n_a1,1))
     s =  np.concatenate((np.kron(np.ones((n_z,1)),agrid),np.kron(zgrid,np.ones((n_a1,1)))),1)
-    c_max = c_bounds(s,c_vec)    
-    c_min = c_bounds(s,c_vec , 'upper')
+    c_max = c_bounds(s,c_vec,q_t,q_t1,r,w,u)    
+    c_min = c_bounds(s,c_vec,q_t,q_t1,r,w,u , 'upper')
     c_vec = np.minimum(c_vec,c_max)
     c_vec = np.maximum(c_vec,c_min)
-    aprime = aprimefunc(s,c_vec)
-    while conv1 > 1e-3:
+    aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
+    while conv1 > 1e-7:
         conv2 = 10.0
         iteration = iteration + 1
         if iteration > fast_coeff:
             dampen_coeff = 1.0
-        while conv2 > 1e-3:
-            aprime_c = aprimefunc_x(s,c_vec)
-            aprime_cc = aprimefunc_xx(s,c_vec)        
+        while conv2 > 1e-7:
+            aprime_c = aprimefunc_x(s,c_vec,q_t,q_t1,r,w,u)
+            aprime_cc = aprimefunc_xx(s,c_vec,q_t,q_t1,r,w,u)        
             sprime = np.concatenate((aprime,s[:,1,None]),axis = 1)
             Phi_xps1 = ip.funbas(P,sprime,(1,0),Polyname)
             Phi_xps2 = ip.funbas(P,sprime,(2,0),Polyname)
             
             
-            Hessian = F_xx(s,c_vec) + beta *( np.multiply(Phi_xps1@coeff_e,aprime_cc ) + np.multiply(Phi_xps2@coeff_e, (aprime_c)**2 ))
-            Jacobian = F_x(s,c_vec) + beta *( np.multiply(Phi_xps1@coeff_e,aprime_c )) 
+            Hessian = F_xx(s,c_vec,q_t,q_t1,r,w,u) + beta *( np.multiply(Phi_xps1@coeff_e,aprime_cc ) + np.multiply(Phi_xps2@coeff_e, (aprime_c)**2 ))
+            Jacobian = F_x(s,c_vec,q_t,q_t1,r,w,u) + beta *( np.multiply(Phi_xps1@coeff_e,aprime_c )) 
             
-            c_vec_next = np.minimum(newton_method(c_vec,Jacobian,Hessian,dampen_newton),c_max)
+            c_vec_next = np.minimum(newton_method(c_vec,Jacobian,Hessian,dampen_newton,q_t,q_t1,r,w,u),c_max)
             c_vec_next = np.maximum(c_vec_next,c_min)
-            #c_vec_next = newton_method(c_vec,Jacobian,Hessian,dampen_newton)
             conv2 = np.max( np.absolute (c_vec_next - c_vec ))
             c_vec = c_vec_next
-            aprime = aprimefunc(s,c_vec)
+            aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
             print(conv2)
         if outer_loop == 1:
             'Computing the stationary distribution'
@@ -287,41 +286,36 @@ def main_loop(coeff,coeff_e,c_vec = c_guess,outer_loop = None,n_a1 = n_a,dampen_
             Q_x = ip.spli_basex((n_a1,a_lower,a_upper),aprime[:,0],knots = None , deg= 1,order = 0)
             Q_z = np.kron(T,np.ones((n_a1,1)))
             Q = ip.dprod(Q_z,Q_x)
-            w , v = slin.eig(Q.transpose())
+            w1 , v = slin.eig(Q.transpose())
             L = (v[:,0] / v[:,0].real.sum(0)).real
-            agra = np.dot(L,aprime) # Aggregate wealth level
-            bprime , h, n = housefunc(s,c_vec)
+            agra = np.dot(L,aprime)
+            h, n, bprime, aprime= housefunc(s,c_vec,q_t,q_t1,r,w,u)
             agrb = np.dot(L,bprime)
             agrh = np.dot(L,h)
             agrn = np.dot(L,n)
-            Res = (L,c_vec,bprime,h,n,agra,agrb,agrh,agrn)
+            Res = (L,c_vec,bprime,h,n,agra,agrb,agrh,agrn,aprime)
         else:
-            conv1, coeff , coeff_e = newton_iter(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F)
+            conv1, coeff , coeff_e = newton_iter(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F,q_t,q_t1,r,w,u)
             Res = (coeff, coeff_e,c_vec)
         print((conv1,conv2))
     return Res
-#'Prices (fixed for now) -just to test' 
-#q_t = 1.1
-#q_t1 = 1.1
-#w = 1.0
-#r = 0.03
-#u = (1. + r) * q_t1 / q_t - 1. 
-#coeff, coeff_e ,c_vec1 = main_loop(coeff_guess,coeff_e_guess)
-#(L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn) = main_loop(coeff,coeff_e,c_guess1,1,n_d)    
-#plt.plot(bprime)
-
+'Get a much better initial guess'
+prices_start = [0.03,1.1]
+coeff_guess, coeff_guess_e ,c_guess = main_loop(coeff_guess,coeff_e_guess,prices_start)
 'Lets search for the stationary equilibrium'
 def iter_loop(prices):
-    q_t = prices[0]
-    q_t1 = prices[0]
-    r = prices[1]
-    w = 1.0
-    u = (1. + r) * q_t1 / q_t - 1. 
-    coeff, coeff_e ,c_vec1 = main_loop(coeff_guess,coeff_e_guess)
-    (L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn) = main_loop(coeff,coeff_e,c_guess1,1,n_d)
-    return agrb,agrh
-agrb,agrh = iter_loop([0.01,1.0])
-def stationary_equlibrium(r,q,r_bounds = [0.005,0.05],q_bounds = [0.7,1.3]):
-    return r
-    
-    
+    coeff, coeff_e ,c_vec1 = main_loop(coeff_guess,coeff_e_guess,prices)
+    L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff,coeff_e,prices,c_guess1,1,n_d)
+    #return np.reshape(np.array([agrb,agrh]),(2,))
+    Res = np.sum(np.array([agrb,agrh-1]) **2)
+    print("Convergence", Res)
+    return Res
+
+solution = minimize(iter_loop,prices_start,method = 'L-BFGS-B', bounds = [(0.01,0.05),(0.7,1.3)])
+'Solution saved'
+sol_x = np.array([ 0.02733261,  1.04685027])
+coeff, coeff_e ,c_vec1 = main_loop(coeff_guess,coeff_e_guess,sol_x)
+L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff,coeff_e,sol_x,c_guess1,1,n_d)
+'Optimality satisfied - make some plots'
+plt.plot(h)
+'Solve for the other stationary equilibrium'
