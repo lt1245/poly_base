@@ -15,6 +15,7 @@ import scipy.linalg as slin
 from numba import jit
 from scipy.optimize import root
 from scipy.optimize import minimize
+from scipy.optimize import brentq
 'Parameters'
 rho_z = 0.79
 sigma_z = 0.34
@@ -27,13 +28,13 @@ sigma = 2.0
 dampen_coeff_start = 0.1 # For both the Bellman iteration and Newton Iteration
 # but only a strating value
 fast_coeff = 10 # Number of iterations after the Newton ieration with 1.0 takes over
-dampen_newton = 1.0 # For the aprime updating in newton method  
+dampen_newton_start = 0.1 # For the aprime updating in newton method  
 
 'Asset grid and z grid'
 a_lower = 0.05
 a_upper = 30.0
 n_a = 10  #number of grid points for assets
-n_d = 20 #number of grid points for assets in the stationary distribution
+n_d = 40 #number of grid points for assets in the stationary distribution
 n_z = 5   #number of grid points for productivity
 n_s = n_a * n_z #Overall number of gridpoints
 n_ds = n_d * n_z #Overall number of gridpoints in the stationary distribution
@@ -74,7 +75,14 @@ def GHH(g,n):
         else:
             Res[i,0] =  1.0 / (1.0 -sigma) * ((g[i,0] - (n[i,0] ** (1.0+ 1.0/nu))/(1.0+ 1.0/nu)) ) ** (1.0 - sigma)    
     return Res
-
+@jit
+def m_util_ch(c,u,q_t):  
+    Res = np.empty(c.shape)
+    if u * q_t  < 1e-8:
+        Res = 10000.0 * c
+    else:
+        Res = eta * (u * q_t) ** (-epsilon) * c
+    return Res
 'Vectorized Newton-Raphson method for maximization'
 def newton_method(oldguess,first_deriv,second_deriv,dampen_newton,q_t,q_t1,r,w,u):
     return oldguess - dampen_newton * np.multiply((1./second_deriv), first_deriv)
@@ -112,9 +120,8 @@ def F(s , c,q_t,q_t1,r,w,u):
     c = np.reshape(c,(n_S,1))
     
     def G(c,a,z):
-        m_util_ch = eta * (u * q_t) ** (-epsilon) * c
         bo_co = a / ((1. - theta) * q_t1)
-        h = np.min(np.concatenate((m_util_ch,bo_co),axis = 1),axis=1)
+        h = np.min(np.concatenate((m_util_ch(c,u,q_t),bo_co),axis = 1),axis=1)
         h = np.reshape(h,(n_S,1))
         mu = 1.0 / q_t * (a / (c *(eta * (1.0 - theta)))) ** (-1. / epsilon) - u
         mu = np.max(np.concatenate((mu, np.zeros((n_S,1))),axis = 1),axis=1)
@@ -134,9 +141,8 @@ def aprimefunc(s,c,q_t,q_t1,r,w,u):
     z = np.reshape(s[:,1],(n_S,1))
     c = np.reshape(c,(n_S,1))
     def G(c,a,z):
-        m_util_ch = eta * (u * q_t) ** (-epsilon) * c
         bo_co = a / ((1 - theta) * q_t1)
-        h = np.min(np.concatenate((m_util_ch,bo_co),axis = 1),axis=1)
+        h = np.min(np.concatenate((m_util_ch(c,u,q_t),bo_co),axis = 1),axis=1)
         h = np.reshape(h,(n_S,1))
         mu = 1.0 / q_t * (a / (c *(eta * (1.0 - theta)))) ** (-1 / epsilon) - u
         mu = np.max(np.concatenate((mu, np.zeros((n_S,1))),axis = 1),axis=1)
@@ -225,9 +231,8 @@ def housefunc(s,c,q_t,q_t1,r,w,u):
     z = np.reshape(s[:,1],(n_S,1))
     c = np.reshape(c,(n_S,1))
     def G(c,a,z):
-        m_util_ch = eta * (u * q_t) ** (-epsilon) * c
         bo_co = a / ((1 - theta) * q_t1)
-        h = np.min(np.concatenate((m_util_ch,bo_co),axis = 1),axis=1)
+        h = np.min(np.concatenate((m_util_ch(c,u,q_t),bo_co),axis = 1),axis=1)
         h = np.reshape(h,(n_S,1))
         mu = 1.0 / q_t * (a / (c *(eta * (1.0 - theta)))) ** (-1 / epsilon) - u
         mu = np.max(np.concatenate((mu, np.zeros((n_S,1))),axis = 1),axis=1)
@@ -241,12 +246,12 @@ def housefunc(s,c,q_t,q_t1,r,w,u):
     bprime = aprime - h
     return h, n, bprime, aprime
 
-def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,dampen_coeff = dampen_coeff_start):
+def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,dampen_coeff = dampen_coeff_start,dampen_newton = dampen_newton_start):
     q_t = prices[1]
     q_t1 = prices[1]
     r = prices[0]
     w = 1.0
-    u = (1. + r) * q_t1 / q_t - 1.     
+    u = (1. + r) * q_t1 / q_t - 1.0     
     'Quantities'
     conv1 = 2.0
     iteration = 0
@@ -260,10 +265,14 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
     aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
     while conv1 > 1e-7:
         conv2 = 10.0
+        iteration1 = 0
         iteration = iteration + 1
         if iteration > fast_coeff:
             dampen_coeff = 1.0
         while conv2 > 1e-7:
+            iteration1 = iteration1 + 1
+            if iteration1 > fast_coeff:
+                dampen_newton = 1.0
             aprime_c = aprimefunc_x(s,c_vec,q_t,q_t1,r,w,u)
             aprime_cc = aprimefunc_xx(s,c_vec,q_t,q_t1,r,w,u)        
             sprime = np.concatenate((aprime,s[:,1,None]),axis = 1)
@@ -279,7 +288,7 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
             conv2 = np.max( np.absolute (c_vec_next - c_vec ))
             c_vec = c_vec_next
             aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
-            print(conv2)
+            #print(conv2)
         if outer_loop == 1:
             'Computing the stationary distribution'
             conv1 = 0
@@ -297,25 +306,59 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
         else:
             conv1, coeff , coeff_e = newton_iter(coeff,coeff_e,dampen_coeff,s,c_vec,sprime,Phi_s,F,q_t,q_t1,r,w,u)
             Res = (coeff, coeff_e,c_vec)
-        print((conv1,conv2))
+        #print((conv1,conv2))
     return Res
 'Get a much better initial guess'
-prices_start = [0.03,1.1]
+prices_start = [0.02,1.0]
 coeff_guess, coeff_guess_e ,c_guess = main_loop(coeff_guess,coeff_e_guess,prices_start)
 'Lets search for the stationary equilibrium'
+bounds = [(0.005,0.06),(0.2,3.0)]
 def iter_loop(prices):
-    coeff, coeff_e ,c_vec1 = main_loop(coeff_guess,coeff_e_guess,prices)
-    L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff,coeff_e,prices,c_guess1,1,n_d)
-    #return np.reshape(np.array([agrb,agrh]),(2,))
-    Res = np.sum(np.array([agrb,agrh-1]) **2)
+    if prices[0] > bounds[0][1] or prices[0] < bounds[0][0] or prices[1] > bounds[1][1] or prices[1] < bounds[1][0]:
+        Res = np.array([10.0,10.0])
+    else:
+        coeff1, coeff1_e ,c_vec11 = main_loop(coeff_guess,coeff_e_guess,prices,c_guess,None,n_a,dampen_coeff_start,dampen_newton_start)
+        L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff1,coeff1_e,prices,c_guess1,1,n_d,dampen_coeff_start,dampen_newton_start)
+        Res = np.array([agrb,agrh-1])
+        Res = Res[:,0]    
     print("Convergence", Res)
     return Res
-
-solution = minimize(iter_loop,prices_start,method = 'L-BFGS-B', bounds = [(0.01,0.05),(0.7,1.3)])
-'Solution saved'
-sol_x = np.array([ 0.02733261,  1.04685027])
-coeff, coeff_e ,c_vec1 = main_loop(coeff_guess,coeff_e_guess,sol_x)
-L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff,coeff_e,sol_x,c_guess1,1,n_d)
-'Optimality satisfied - make some plots'
-plt.plot(h)
-'Solve for the other stationary equilibrium'
+z = iter_loop([0.0001,0.5])
+solution = root(iter_loop,prices_start,method = 'hybr')
+#solution = minimize(iter_loop,prices_start,method = 'L-BFGS-B', bounds = [(0.001,0.06),(0.2,3.0)])
+#'Solution of the initial steady state saved'
+#sol1_x = np.array([ 0.02733261,  1.04685027])
+#coeff_sol1, coeff_e_sol1 ,c_vec1_sol1 = main_loop(coeff_guess,coeff_e_guess,sol1_x)
+#L_sol1,c_vec2_sol1,bprime_sol1,h_sol1,n_sol1,agra_sol1,agrb_sol1,agrh_sol1,agrn_sol1,aprime_sol1 = main_loop(coeff_sol1,coeff_e_sol1,sol1_x,c_guess1,1,n_d)
+#'Optimality satisfied - make some plots'
+#plt.plot(h)
+#'Solve for the other stationary equilibrium'
+#theta = 0.5
+#dampen_coeff_start = 0.1 # For both the Bellman iteration and Newton Iteration
+#dampen_newton_start = 0.01 # For the aprime updating in newton method  
+#fast_coeff = 20
+#solution2 = minimize(iter_loop,prices_start,method = 'L-BFGS-B', bounds = [(0.001,0.06),(0.2,3.0)])
+#sol2_x = np.array([ 0.02690688,  0.4165023])
+#houseprices = np.linspace(0.2,3.0,10)
+#agrbs = np.empty((10,1))
+#agrhs = np.empty((10,1))
+#for i in range(10):
+#    sol2_x = np.array([ 0.027, houseprices[i]])
+#    coeff_sol2, coeff_e_sol2 ,c_vec1_sol2 = main_loop(coeff_guess,coeff_e_guess,sol2_x,c_guess,None,n_a,dampen_coeff_start,dampen_newton_start)
+#    L_sol2,c_vec2_sol2,bprime_sol2,h_sol2,n_sol2,agra_sol2,agrb_sol2,agrh_sol2,agrn_sol2,aprime_sol2 = main_loop(coeff_sol2,coeff_e_sol2,sol2_x,c_guess1,1,n_d,dampen_coeff_start,dampen_newton_start)
+#    agrbs[i,0] = agrb_sol2
+#    agrhs[i,0] = agrh_sol2
+#plt.plot(agrbs)
+#plt.show()
+#'Iterative root finding'
+#def iter_loop1(q_t):
+#    prices = np.empty((2,))
+#    prices[1] = q_t
+#    prices[0] = 0.02
+#    coeff1, coeff1_e ,c_vec11 = main_loop(coeff_guess,coeff_e_guess,prices,c_guess,None,n_a,dampen_coeff_start,dampen_newton_start)
+#    L,c_vec2,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff1,coeff1_e,prices,c_guess1,1,n_d,dampen_coeff_start,dampen_newton_start)
+#    Res = agrh-1.0
+#    print("Convergence", Res)
+#    return Res
+#iter_loop1(2.5)
+#brentq(iter_loop1,0.5,2.5)
