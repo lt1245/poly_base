@@ -1,9 +1,11 @@
 import numpy as np
 from numba import jit
+from scipy.interpolate import fitpack as spl # For splines - temporary
 @jit
 def dprod(A,B):
-    """calculate tensor product of two matrices
-    with the same number of rows
+    """ The direct sum of two matrices with the same number
+	of rows is equivalent to computing row-wise tensor
+	(Kronecker) products.
     
     Parameters
     ----------
@@ -75,6 +77,37 @@ def cheb_nodes(p, nodetype=0):
         k = np.pi*np.linspace(0,n-1,n)
         x = m - np.cos(k[0:n]/(n-1)) * s
     return x
+@jit
+def wealth_knot(p,degree = 1,curv  = 0.15):
+    """Knots for wealth distributions - for 1 dimension.
+
+    Returns commonly used knots that can be used with splines
+
+    Parameters
+    ----------
+    p : array_like
+        Parameter array containing:
+         - the number of nodes
+         - the lower bound of the approximation
+         - the upper bound of the approximation
+    deg : int
+            Degree of the splines.
+            Default: create nodes instead of knots
+    curve : float
+            Weight on the lower end
+            Default: 0.15
+
+    Returns
+    -------
+    x :  an array containing the knots
+
+    Notes
+    -----
+    Use these knots if you have boundary problems.
+    """
+    n , a , b = p[0] , p[1] , p[2]
+    knots = np.linspace(a**curv, b**curv,n + 1 - degree) **(1.0/curv)
+    return knots
 @jit
 def cheb_basex(p, x): 
     """Cheb basis matrix - for 1 dimension.
@@ -150,9 +183,8 @@ def mono_basex(p, x):
         for j in range(1,n):
             bas[i, j] = z[i] * bas[i, j-1]
     return bas
-from scipy.interpolate import fitpack as spl
 @jit
-def spli_basex(p, x ,knots=None , deg = 2 , order = 0 ):
+def spli_basex(p, x ,knots=None , deg = 3 , order = 0 ):
     """Vandermonde type matrix for splines.
 
     Returns a matrix whose columns are the values of the b-splines of deg
@@ -191,7 +223,7 @@ def spli_basex(p, x ,knots=None , deg = 2 , order = 0 ):
     """
     n , a , b = p[0] , p[1] , p[2]
     if knots is None:
-        knots = np.linspace(a , b , n + deg + 1 - 2*deg)
+        knots = np.linspace(a , b , n + 1 - deg)
     augbreaks = np.concatenate(( a * np.ones((deg)),knots, b * np.ones((deg))))
     m = len(augbreaks) - deg - 1
     v = np.empty((m, len(x)))
