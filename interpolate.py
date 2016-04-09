@@ -358,5 +358,5 @@ def funbas(p,x,order = None, polynomial = None):
                 Phi1=mono_basex(p[j,:], x[:,j]) @ np.linalg.matrix_power(mono_diff(p[j,:]),order[j])
             elif polynomial[j]=='spli':
                 Phi1=spli_basex(p[j,:], x[:,j], order = order[j]) 
-            Phi0=dprod(Phi0,Phi1)
+            Phi0=dprod(Phi1,Phi0)
     return Phi0
