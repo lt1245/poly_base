@@ -37,7 +37,7 @@ degree_z = 1 #linear splines for productivity
 a_lower = 0.01
 a_upper = 150.0
 n_a = 31  #number of grid points for assets
-n_d = 100 #number of grid points for assets in the stationary distribution
+n_d = 31 #number of grid points for assets in the stationary distribution
 n_z = 10  #number of grid points for productivity
 n_s = n_a * n_z #Overall number of gridpoints
 n_ds = n_d * n_z #Overall number of gridpoints in the stationary distribution
@@ -268,7 +268,7 @@ def housefunc(s,c,q_t,q_t1,r,w,u):
         n = (w* (z / p)) **nu   
         return  h, mu , p , n
     h , mu , p , n = G(c , a , z) 
-    aprime = ( w * np.multiply(z , n)  + (1 + r) * a - c - u * q_t * h)
+    aprime = w * np.multiply(z , n)  + (1.0 + r) * a - c - u * q_t * h
     bprime = aprime - h
     return h, n, bprime, aprime
     
@@ -281,6 +281,23 @@ def Perturb_Q(A):
         A[i,:] = A[i,:]/(np.sum(A[i,:]))
     return A
     
+def distribution(c_vec,n_a1,a_lower,a_upper,aprime,bprime,h,n):
+    Q_x = ip.spli_basex((n_a1,a_lower,a_upper),aprime[:,0],knots = ip.wealth_knot((n_a1,P[0,1],P[0,2])), deg=1,order = 0) #knots = ip.wealth_knot((n_a1,P[0,1],P[0,2])),
+    Q_z = np.kron(T,np.ones((n_a1,1)))
+    Q = ip.dprod(Q_z,Q_x)
+    Q = Perturb_Q(Q)
+    Eigenval, Eigenvec = sp.linalg.eig(Q, left = True, right = False )
+    Eigenvec=Eigenvec.real
+    arg = np.argmin(np.abs(Eigenval - 1.))
+    stationary_dist = Eigenvec[:,arg]
+    stationary_dist =  (stationary_dist.real)/(stationary_dist.real.sum())
+    L = stationary_dist
+    agra = np.dot(L,aprime)
+    agrb = np.dot(L,bprime)
+    agrh = np.dot(L,h)
+    agrn = np.dot(L,n)
+    Res = (L,c_vec,bprime,h,n,agra,agrb,agrh,agrn,aprime)
+    return Res
 
 def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,dampen_coeff = dampen_coeff_start,dampen_newton = dampen_newton_start):
     q_t = prices[1]
@@ -311,7 +328,7 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
         iteration = iteration + 1
         while conv2 > 1e-7:
             iteration1 = iteration1 + 1
-            if iteration1 > fast_coeff and outer_loop != 1:
+            if iteration1 > fast_coeff:# and outer_loop != 1:
                 dampen_newton = 1.0
             aprime_c = aprimefunc_x(s,c_vec,q_t,q_t1,r,w,u)
             aprime_cc = aprimefunc_xx(s,c_vec,q_t,q_t1,r,w,u)        
@@ -329,13 +346,14 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
             c_vec_next = np.minimum(newton_method(c_vec,Jacobian,Hessian,dampen_newton,q_t,q_t1,r,w,u),c_max)
             c_vec_next = np.maximum(c_vec_next,c_min)
             conv2 = np.max( np.absolute (c_vec_next - c_vec ))
-            c_vec = c_vec_next
-            aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
+            np.copyto(c_vec,c_vec_next)
+            h, n, bprime, aprime= housefunc(s,c_vec,q_t,q_t1,r,w,u)
+            #aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
             print(conv2)
         if outer_loop == 1:
             'Computing the stationary distribution'
             conv1 = 0
-            Q_x = ip.spli_basex((n_a1,a_lower,a_upper),aprime[:,0], deg=1,order = 0) #knots = ip.wealth_knot((n_a1,P[0,1],P[0,2])),
+            Q_x = ip.spli_basex((n_a1,a_lower,a_upper),aprime[:,0],knots = ip.wealth_knot((n_a1,P[0,1],P[0,2])), deg=1,order = 0) #knots = ip.wealth_knot((n_a1,P[0,1],P[0,2])),
             Q_z = np.kron(T,np.ones((n_a1,1)))
             Q = ip.dprod(Q_z,Q_x)
             Q = Perturb_Q(Q)
@@ -346,7 +364,6 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
             stationary_dist =  (stationary_dist.real)/(stationary_dist.real.sum())
             L = stationary_dist
             agra = np.dot(L,aprime)
-            h, n, bprime, aprime= housefunc(s,c_vec,q_t,q_t1,r,w,u)
             agrb = np.dot(L,bprime)
             agrh = np.dot(L,h)
             agrn = np.dot(L,n)
@@ -364,10 +381,47 @@ def main_loop(coeff,coeff_e,prices,c_vec = c_guess,outer_loop = None,n_a1 = n_a,
 'Get a much better initial guess'
 prices_start = [0.02,1.0]
 coeff_guess, coeff_guess_e ,c_guess = main_loop(coeff_guess,coeff_e_guess,prices_start)
-L,c_guess1,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff_guess,coeff_e_guess,prices_start,c_guess1,1,n_d,dampen_coeff_start,dampen_newton_start)
+#L,c_guess1,bprime,h,n,agra,agrb,agrh,agrn,aprime = main_loop(coeff_guess,coeff_e_guess,prices_start,c_guess1,1,n_d,dampen_coeff_start,dampen_newton_start)
 #fast_coeff = 10
 'Lets search for the stationary equilibrium'
-bounds = [(0.01,0.05),(0.6,1.4)]
+#bounds = [(0.01,0.05),(0.6,1.4)]
+c_vec = c_guess
+prices = prices_start
+q_t = prices[1]
+q_t1 = prices[1]
+r = prices[0]
+w = 1.0
+u = (1. + r) * q_t1 / q_t - 1.0    
+coeff_e = coeff_guess_e
+dampen_newton = dampen_newton_start
+n_a1 = n_d
+conv2 = 10.0
+iteration1 = 0
+while conv2 > 1e-7:
+    iteration1 = iteration1 + 1
+    if iteration1 > fast_coeff:# and outer_loop != 1:
+        dampen_newton = 1.0
+    aprime_c = aprimefunc_x(s,c_vec,q_t,q_t1,r,w,u)
+    aprime_cc = aprimefunc_xx(s,c_vec,q_t,q_t1,r,w,u)        
+    sprime = np.concatenate((aprime,s[:,1,None]),axis = 1)
+    #Phi_xprime1 = ip.spli_basex(P[0],sprime[:,0], deg = degree,order = 1)
+    #Phi_xprime2 = ip.spli_basex(P[0],sprime[:,0], deg = degree,order = 2)
+    Phi_xprime1 = ip.spli_basex(P[0],sprime[:,0],knots = knots_x , deg = degree,order = 1)
+    Phi_xprime2 = ip.spli_basex(P[0],sprime[:,0],knots = knots_x , deg = degree,order = 2)
+    Phi_xps1 = ip.dprod(Phi_z,Phi_xprime1) 
+    Phi_xps2 = ip.dprod(Phi_z,Phi_xprime2)            
+    
+    Hessian = F_xx(s,c_vec,q_t,q_t1,r,w,u) + beta *( np.multiply(Phi_xps1@coeff_e,aprime_cc ) + np.multiply(Phi_xps2@coeff_e, (aprime_c)**2 ))
+    Jacobian = F_x(s,c_vec,q_t,q_t1,r,w,u) + beta *( np.multiply(Phi_xps1@coeff_e,aprime_c )) 
+    
+    c_vec_next = np.minimum(newton_method(c_vec,Jacobian,Hessian,dampen_newton,q_t,q_t1,r,w,u),c_max)
+    c_vec_next = np.maximum(c_vec_next,c_min)
+    conv2 = np.max( np.absolute (c_vec_next - c_vec ))
+    np.copyto(c_vec,c_vec_next)
+    h, n, bprime, aprime= housefunc(s,c_vec,q_t,q_t1,r,w,u)
+    #aprime = aprimefunc(s,c_vec,q_t,q_t1,r,w,u)
+    print(conv2)
+
 #def iter_loop(prices):
 #    if prices[0] > bounds[0][1] or prices[0] < bounds[0][0] or prices[1] > bounds[1][1] or prices[1] < bounds[1][0]:
 #        Res = np.array([10.0,10.0])
