@@ -1,6 +1,8 @@
 import numpy as np
 from numba import jit
 from scipy.interpolate import fitpack as spl # For splines - temporary
+import functools
+
 @jit
 def dprod(A,B):
     """ The direct sum of two matrices with the same number
@@ -34,7 +36,7 @@ def dprod(A,B):
     for t in range(nobsa):
         for ia in range(na):
             for ib in range(nb):            
-                Res[t,nb*(ia-1)+ib] = A[t,ia] * B[t, ib]
+                Res[t,nb*(ia)+ib] = A[t,ia] * B[t, ib]
     return Res
 
 @jit
@@ -78,7 +80,7 @@ def cheb_nodes(p, nodetype=0):
         x = m - np.cos(k[0:n]/(n-1)) * s
     return x
 @jit
-def wealth_knot(p,degree = 1,curv  = 0.15):
+def wealth_knot(p,degree = 1,curv  = 0.15,lower_bound = 1e-7):
     """Knots for wealth distributions - for 1 dimension.
 
     Returns commonly used knots that can be used with splines
@@ -96,7 +98,8 @@ def wealth_knot(p,degree = 1,curv  = 0.15):
     curve : float
             Weight on the lower end
             Default: 0.15
-
+    lower_bound : float
+            the correction for the lower bound
     Returns
     -------
     x :  an array containing the knots
@@ -106,7 +109,7 @@ def wealth_knot(p,degree = 1,curv  = 0.15):
     Use these knots if you have boundary problems.
     """
     n , a , b = p[0] , p[1] , p[2]
-    knots = np.linspace(a**curv, b**curv,n + 1 - degree) **(1.0/curv)
+    knots = np.linspace((a + lower_bound)**curv, (b+ lower_bound)**curv,n + 1 - degree) **(1.0/curv) -lower_bound
     return knots
 @jit
 def cheb_basex(p, x): 
@@ -360,3 +363,97 @@ def funbas(p,x,order = None, polynomial = None):
                 Phi1=spli_basex(p[j,:], x[:,j], order = order[j]) 
             Phi0=dprod(Phi1,Phi0)
     return Phi0
+@jit
+def goldenx(f,a,b,tol,*arg):
+    """Vectorized golden section search to maximize univariate functions simultaneously
+
+    Returns the maximum and the maximal value of f
+
+    Parameters
+    ----------
+    f : function
+        Function that maps from R^n to R^n such that it is an augmented univariate function
+    a : array_like
+        The lower bound for the maximization, for each dimension
+    b : array_like
+        The upper bound for the maximization, for each dimension
+    tol : float
+        Specifies the default tolerance value (for the argument of f) - default is 10**(-10)        
+    Returns
+    -------
+    x1 : ndarray
+       Returns the n dimensional solution of the maximization.
+    f1 : ndarray
+       Returns the n dimensional maximum values.
+    Notes
+    -----
+    What is missing: additional arguments can be passed to f but not as a tuple (difference to scipy optimize).
+    As a consequence, tolerance has to be defined all the time. The sig function is not nice. But pretty fast
+    """ 
+    
+    alpha1 = (3.0 - np.sqrt(5)) / 2.0
+    alpha2 = 1.0 - alpha1
+    d  = b - a
+    x1 = a + alpha1 * d
+    x2 = a + alpha2 * d
+    s  = np.ones(x1.shape)
+    f1 = f(x1,*arg)
+    f2 = f(x2,*arg)
+    d = alpha1 * alpha2 * d
+#    if((b-a).min() <0):
+#        print('Fix the bounds yo')
+#        conv = 0.0
+#    else:
+#       conv = 2.0   
+    conv = 2.0
+    while conv > tol:        
+        i = np.greater(f2,f1)
+        not_i = np.logical_not(i)
+        sig = np.ones(x1.shape)
+        sig[not_i] = -1.0
+        x1[i] = x2[i]
+        f1[i] = f2[i]
+        d = alpha2 * d
+        x2 = x1 + np.multiply(np.multiply(np.multiply(s,(i^(not_i))),d),sig)
+        s = np.sign(x2-x1)
+        f2 = f(x2,*arg)
+        conv = np.max(d)          
+    return x1, f1
+def equidistant_nonlin_grid(orig_grid,newgrid_size):
+    """Create a fine 1D grid,equidistant between the points of the original grid 
+
+    Returns the new grid
+
+    Parameters
+    ----------
+    orig_grid : (n,0) array_like
+    
+    newgrid_size : int
+    Specifies the size of the new grid
+     
+    Returns
+    -------
+    fine_grid : ndarray
+       Returns the finer grid containing the original gridpoints.
+
+    Notes
+    -----
+
+    """ 
+    orig_grid_size = orig_grid.shape[0]
+    no_equidistant = np.int((newgrid_size)/(orig_grid_size-1))
+    remainder = newgrid_size - no_equidistant *(orig_grid_size-1) 
+    fine_grid = np.zeros((newgrid_size))
+    prev_grid_end = 0
+    for i in range(orig_grid_size-1):
+        endpoint_included = False
+        if i< remainder:
+            points_between = no_equidistant + 1
+        elif(i ==(orig_grid_size-2)):
+            points_between = no_equidistant
+            endpoint_included = True
+        else:
+            points_between = no_equidistant
+        fine_grid[prev_grid_end:(prev_grid_end + points_between) ] = np.linspace(orig_grid[i],orig_grid[i+1],points_between,endpoint = endpoint_included)
+        prev_grid_end = prev_grid_end + points_between
+    return fine_grid
