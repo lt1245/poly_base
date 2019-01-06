@@ -1,4 +1,4 @@
-Python version of Miranda and Fackler's CompEcon toolbox for solving heterogenous agents models. \n
+Python version of Miranda and Fackler's CompEcon toolbox for solving heterogenous agents models.
 The main goal of the toolkit is to have low level basis matrix representation for functional approximation.
 To use: import the toolkit in your folder and see the replication files to see how to generate the basis functions. 
 Does not use any class structure.
