@@ -15,3 +15,4 @@ mono_diff - Differentiating matrix for monomial <br />
 funbas - Creates a multidimensional basis matrix <br />
 goldenx - Vectorized golden section search to maximize a collection of univariate functions simultaneously <br />
 equidistant_nonlin_grid - Creates a fine 1D grid, equidistant between the points of the original grid <br />
+Rouwenhorst - Rouwenhorst method to approximate an AR(1) process
