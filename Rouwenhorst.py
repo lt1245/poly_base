@@ -1,11 +1,11 @@
 """
 Created on Mon Mar 14 12:16:13 2016
-Rowenhurst Algorithm
+Rouwenhorst Algorithm
 @author: donjayamaha
 """
 
 import numpy as np
-def Rowenhurst(rho_logz, sigma_logz, zgrid_size ):
+def Rouwenhorst(rho_logz, sigma_logz, zgrid_size ):
 
     def Transition_RM(p, q, n ):
         """

@@ -6,7 +6,7 @@ Method: Value Function Approximation/Collocation (following notes of Simon Monge
 Authors: Don Jayamaha and Laszlo Tetenyi
 """
 from poly_base import interpolate as ip #Imported from Laszlo's github directory
-from Rowenhurst import Rowenhurst
+from Rouwenhorst import Rouwenhorst
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -42,8 +42,8 @@ n_z = 10  #number of grid points for productivity
 n_s = n_a * n_z #Overall number of gridpoints
 n_ds = n_d * n_z #Overall number of gridpoints in the stationary distribution
 
-'Rowenhurst method for z'
-T,zgrid = Rowenhurst(rho_z, sigma_z**2, n_z )
+'Rouwenhorst method for z'
+T,zgrid = Rouwenhorst(rho_z, sigma_z**2, n_z )
 zgrid = np.reshape(zgrid,(n_z,1))
 
 'Polynomial basis matrix' 
